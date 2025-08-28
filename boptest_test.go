@@ -2,28 +2,96 @@ package boptest
 
 import (
 	"fmt"
+	"log/slog"
 	"testing"
 )
 
 var (
-	testId   = "28d872d6-d2e9-44b5-9096-29846ed07b47"
-	testcase = "bestest_hydronic_heat_pump"
-	host     = "0.0.0.0"
+	testID   = "c07abb5f-7f21-4d1f-a325-bba1ce05f7b1"
+	testcase = "bestest_air"
+	host     = "0.0.0.0:1025"
 )
 
-func TestGetTestId(t *testing.T) {
-	Host = host
-	GetTestId(testcase)
+// func TestLaunchTestCase(t *testing.T) {
+// 	Host = host
+// 	testID, err := NewTestCase(testcase)
+// 	if err != nil {
+// 		log.Println(err.Error())
+// 		t.FailNow()
+// 	}
+// 	fmt.Printf("started test case \"%s\" with id \"%s\".\n", testcase, testID)
+// }
+
+func TestLoggingLevels(t *testing.T) {
+	fmt.Printf("The term log level is %s\n", termLogLevel.Level().String())
+	termLogLevel.Set(slog.LevelDebug)
+	fmt.Printf("The term log level is %s\n", termLogLevel.Level().String())
+	fileLogLevel.Set(slog.LevelWarn)
+	fmt.Printf("The file log level is %s\n", fileLogLevel.Level().String())
+	termLog.Info("this should print to the terminal")
+	fileLog.Info("this should print log file")
 }
 
-func TestGetMeasurements(t *testing.T) {
+func TestStopTest(t *testing.T) {
+	fmt.Printf("stopping test case \"%s\"\n", testID)
+	stopTestCase(testID)
+}
+
+func TestStartStopTestCase(t *testing.T) {
 	Host = host
-	GetMeasurements(testId)
+	testCase, err := NewTestCase(testcase)
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+
+	// stop the testcase
+	err = testCase.Stop()
+	if err != nil {
+		fmt.Println(err.Error())
+		fmt.Printf("error: could not stop test case \"%s\" with id \"%s\". Please stop mannually.\n",
+			testcase, testCase.ID)
+		t.FailNow()
+	}
+}
+
+func startTestCase() *TestCase {
+	Host = host
+	testCase, err := NewTestCase(testcase)
+	if err != nil {
+		fileLog.Error(err.Error())
+		return nil
+	}
+	// fmt.Printf("started test case \"%s\" with id \"%s\" @ %v.\n",
+	// 	testcase, testCase.ID, testCase.Created)
+	return testCase
+}
+
+func TestMeasurements(t *testing.T) {
+	testCase := startTestCase()
+	if testCase == nil {
+		t.FailNow()
+	}
+	defer testCase.Stop()
+
+	m, err := testCase.Measurements()
+	if err != nil {
+		fileLog.Error(err.Error())
+		t.FailNow()
+	}
+	for k, p := range m {
+		fmt.Printf("%s (%s) '%s'\n", k, p.Unit, p.Description)
+	}
 }
 
 func TestGetInputs(t *testing.T) {
-	Host = host
-	m, err := GetInputs(testId)
+	testCase := startTestCase()
+	if testCase == nil {
+		t.FailNow()
+	}
+	defer testCase.Stop()
+
+	m, err := testCase.Inputs()
 	if err != nil {
 		t.FailNow()
 	}
@@ -32,6 +100,47 @@ func TestGetInputs(t *testing.T) {
 	}
 }
 
-func TestStopTest(t *testing.T) {
-	StopTest(testId)
+func TestRunTestCase(t *testing.T) {
+	Host = host
+	testCase, err := NewTestCase(testcase, WithStartTime(3600*24*31))
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+	defer testCase.Stop()
+
+	err = testCase.Run()
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+}
+
+func TestSetGetStep(t *testing.T) {
+	Host = host
+	testCase, err := NewTestCase(testcase, WithStartTime(3600*24*31))
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+	defer testCase.Stop()
+
+	err = testCase.Run()
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+
+	err = testCase.SetStep(60) // seconds
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+
+	s, err := testCase.Step()
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+	fmt.Printf("the time step is set to %d seconds", s)
 }
