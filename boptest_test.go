@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	testID   = "61df7871-dabe-4383-805a-50413c991b85"
+	testID   = "bebccf5a-385a-4145-9f48-057b0c5080a9"
 	testcase = "bestest_air"
 	host     = "0.0.0.0:1025"
 )
@@ -43,6 +43,12 @@ func TestStopTest(t *testing.T) {
 	}
 }
 
+func TestStartTestCase(t *testing.T) {
+	Host = host
+	testCase := startTestCase()
+	fmt.Printf("started test case \"%s\" @ %s\n", testCase.ID, testCase.Created.String())
+}
+
 func TestCreateAndStopTestCase(t *testing.T) {
 	Host = host
 	testCase, err := NewTestCase(testcase)
@@ -51,14 +57,13 @@ func TestCreateAndStopTestCase(t *testing.T) {
 		t.FailNow()
 	}
 
-	// stop the testcase
-	err = testCase.stop()
+	err = testCase.Start()
 	if err != nil {
 		fmt.Println(err.Error())
-		fmt.Printf("error: could not stop test case \"%s\" with id \"%s\". Please stop mannually.\n",
-			testcase, testCase.ID)
-		t.FailNow()
+		t.Fail()
 	}
+
+	testCase.Stop()
 }
 
 func startTestCase() *TestCase {
@@ -241,4 +246,29 @@ func TestSetGetStep(t *testing.T) {
 		fmt.Println(err.Error())
 		t.FailNow()
 	}
+}
+
+func TestCaseStatus(t *testing.T) {
+	Host = host
+	testCase, err := NewTestCase(testcase,
+		WithStartTime(3600*24*31),
+		WithStep(2), // seconds
+	)
+	if err != nil {
+		fileLog.Error(err.Error())
+	}
+
+	err = testCase.Start()
+	if err != nil {
+		fileLog.Error(err.Error())
+	}
+
+	ok := testCase.Status()
+	if ok {
+		fmt.Println("test case running!")
+	} else {
+		fmt.Println("not running")
+	}
+
+	defer testCase.Stop()
 }

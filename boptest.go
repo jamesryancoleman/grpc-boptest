@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,8 +109,8 @@ func (m *StateMap) GetMultiple(keys []string) map[string]any {
 type TestCase struct {
 	ID string `json:"testid"`
 
-	ticker *time.Ticker  `json:"-"`
 	stopCh chan struct{} `json:"-"`
+	ticker *time.Ticker  `json:"-"`
 
 	Created time.Time `json:"-"`
 	Started time.Time `json:"-"`
@@ -146,6 +147,11 @@ func WithStep(d int) testCaseOption {
 	}
 }
 
+type HTTPResponse struct {
+	Status string
+	Body   []byte
+}
+
 type JSONResponse struct {
 	Status  int    `json:"status"`
 	Message string `json:"message"`
@@ -163,11 +169,6 @@ type PointProperties struct {
 	Maximum     float64
 }
 
-type HTTPResponse struct {
-	Status string
-	Body   []byte
-}
-
 type StateUpdate struct {
 	JSONResponse
 	State map[string]any `json:"payload"`
@@ -178,10 +179,28 @@ type SetStepResponse struct {
 	Step int `json:"payload"`
 }
 
+type RunningResponse struct {
+	JSONResponse
+	Step int `json:"payload"`
+}
+
+type ErrorList struct {
+	Errors []BoptestError
+}
+
+type BoptestError struct {
+	Value    string `json:"value"`
+	Msg      string `json:"msg"`
+	Param    string `json:"param"`
+	Location string `json:"location"`
+}
+
 func Get(url string) (HTTPResponse, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		termLog.Error(err.Error())
+		fileLog.Error(err.Error())
+		return HTTPResponse{}, err
 	}
 	defer resp.Body.Close()
 
@@ -259,6 +278,7 @@ func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
 		state: make(map[string]any),
 	}
 	testCase.step = DefaultStep
+	// testCase.startCh = make(chan struct{})
 	testCase.stopCh = make(chan struct{})
 	testCase.Created = time.Now()
 
@@ -268,6 +288,22 @@ func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
 	for _, opt := range opts {
 		opt(testCase)
 	}
+
+	// set the step if its not the default
+	if testCase.step != DefaultStep {
+		err := testCase.SetStep(testCase.step)
+		if err != nil {
+			fileLog.Error("unable to set step", "test_case", testCase.ID)
+			return testCase, err
+		}
+	}
+
+	// this never gets used... but is necessary for run to work.
+	d := time.Duration(testCase.step * int(time.Second))
+	testCase.ticker = time.NewTicker(d)
+	testCase.ticker.Stop()
+
+	go testCase.run()
 
 	return testCase, nil
 }
@@ -297,6 +333,7 @@ func (c *TestCase) stop() error {
 
 func (c *TestCase) Stop() {
 	c.stopCh <- struct{}{}
+	<-c.stopCh // unblocked by the run loop
 }
 
 // takes the testid and returns all possible measurements
@@ -352,23 +389,15 @@ func (c *TestCase) Inputs() (map[string]PointProperties, error) {
 	return inputs(c.ID)
 }
 
+// the TestCase gets a ticker assigned and the that activates the run loop
+// that was created with NewTestCase().
 func (c *TestCase) Start() error {
-	// set the step if its not the default
-	if c.step != DefaultStep {
-		err := c.SetStep(c.step)
-		if err != nil {
-			fileLog.Error("unable to set step", "test_case", c.ID)
-			return err
-		}
-	}
-
 	// define t=0 and start simulation
 	payload, err := json.Marshal(c)
 	if err != nil {
 		fileLog.Error(err.Error())
 		return err
 	}
-	// fmt.Printf("intializing with\n%s\n", string(payload))
 
 	url := fmt.Sprintf("http://%s/initialize/%s", Host, c.ID)
 	b, err := Put(url, "application/json", payload)
@@ -377,7 +406,6 @@ func (c *TestCase) Start() error {
 		return err
 	}
 
-	// fmt.Println(string(b))
 	var resp StateUpdate
 	err = json.Unmarshal(b, &resp)
 	if err != nil {
@@ -393,11 +421,10 @@ func (c *TestCase) Start() error {
 		fileLog.Warn("start called on running simulation")
 		return nil
 	}
+
 	d := time.Duration(c.step * int(time.Second))
 	c.ticker = time.NewTicker(d)
 	fileLog.Debug("ticker started", "interval", d)
-	// wait for c.step second then launch run
-	go c.run()
 
 	return nil
 }
@@ -420,8 +447,8 @@ func (c *TestCase) run() {
 			err := c.stop()
 			if err != nil {
 				fileLog.Error("unable to stop", "test_case", c.ID)
-				return
 			}
+			c.stopCh <- struct{}{}
 			return
 		}
 	}
@@ -492,6 +519,61 @@ func (c *TestCase) SetStep(step int) error {
 	}
 	c.step = step
 	return nil
+}
+
+// True for running, false for an error
+func (c *TestCase) Status() bool {
+	url := fmt.Sprintf("http://%s/status/%s", Host, c.ID)
+	httpResp, err := Get(url)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.HasSuffix(errMsg, "connect: connection refused") {
+			fileLog.Error("fatal: boptest server not running")
+		}
+		return false
+	}
+
+	if string(httpResp.Body) != `"Running"` {
+		return false
+	}
+
+	// fmt.Printf("status is: %s\n", string(httpResp.Body))
+	return true
+}
+
+// the only way to see if something is runnig is to use status.
+func Running(name string) bool {
+	url := fmt.Sprintf("http://%s/name/%s", Host, name)
+	httpResp, err := Get(url)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.HasSuffix(errMsg, "connect: connection refused") {
+			fileLog.Error("fatal: boptest server not running")
+		}
+		return false
+	}
+
+	var boptestErr ErrorList
+	err = json.Unmarshal(httpResp.Body, &boptestErr)
+	if err != nil {
+		// unmarshalling error
+		// this may not be an error, could just the testcase is running
+		fileLog.Info("did not receive error list", "errors", string(httpResp.Body))
+	}
+
+	if len(boptestErr.Errors) > 0 {
+		// check if the first one indicates that the testcase is not running
+		fileLog.Info("boptest returned errors", "errors", string(httpResp.Body))
+		for _, e := range boptestErr.Errors {
+			if (e.Value == name) && (strings.HasPrefix(e.Msg, "Invalid testid:")) {
+				// the testcase is not running.
+				fileLog.Info("testcase not running", "test_case", name)
+				return false
+			}
+		}
+	}
+
+	return false
 }
 
 func TestIdTimeout(testId string) string {
