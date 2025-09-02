@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	testID   = "bebccf5a-385a-4145-9f48-057b0c5080a9"
+	testID   = "657ef052-5b0e-4c1c-b9f1-4cc1cde6f775"
 	testcase = "bestest_air"
 	host     = "0.0.0.0:1025"
 )
@@ -127,7 +127,7 @@ func TestStopWithChannel(t *testing.T) {
 	}
 
 	fmt.Println("sleeping until stop channel send")
-	time.Sleep(time.Second * 7)
+	time.Sleep(time.Second * 3)
 	testCase.Stop()
 
 	time.Sleep(time.Second * 1) // wait to see clean up
@@ -257,18 +257,43 @@ func TestCaseStatus(t *testing.T) {
 	if err != nil {
 		fileLog.Error(err.Error())
 	}
+	testCase.Stop()
 
 	err = testCase.Start()
 	if err != nil {
 		fileLog.Error(err.Error())
+		t.FailNow()
 	}
 
 	ok := testCase.Status()
 	if ok {
 		fmt.Println("test case running!")
+		t.FailNow() // should not be running
 	} else {
 		fmt.Println("not running")
 	}
 
+	// create one an have it be runnnig when the Status check occurs
+	testCase, err = NewTestCase(testcase,
+		WithStartTime(3600*24*31),
+		WithStep(2), // seconds
+	)
+	if err != nil {
+		fileLog.Error(err.Error())
+	}
 	defer testCase.Stop()
+
+	err = testCase.Start()
+	if err != nil {
+		fileLog.Error(err.Error())
+		t.FailNow()
+	}
+
+	ok = testCase.Status()
+	if ok {
+		fmt.Println("test case running!")
+	} else {
+		fmt.Println("not running")
+		t.Fail()
+	}
 }

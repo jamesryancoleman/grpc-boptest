@@ -107,7 +107,8 @@ func (m *StateMap) GetMultiple(keys []string) map[string]any {
 }
 
 type TestCase struct {
-	ID string `json:"testid"`
+	ID   string `json:"testid"`
+	Host string `json:"-"`
 
 	stopCh chan struct{} `json:"-"`
 	ticker *time.Ticker  `json:"-"`
@@ -125,6 +126,14 @@ type TestCase struct {
 }
 
 type testCaseOption func(*TestCase)
+
+// seconds since start of year
+func WithHost(addr string) testCaseOption {
+	return func(c *TestCase) {
+		Host = addr
+		c.Host = addr
+	}
+}
 
 // seconds since start of year
 func WithStartTime(t int) testCaseOption {
@@ -251,7 +260,23 @@ func Post(url, contentType string, payload []byte) []byte {
 
 // takes the name of the testcase and returns the test id.
 func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
-	url := fmt.Sprintf("http://%s/testcases/%s/select", Host, testcase)
+	var c = &TestCase{}
+	// initialize fields
+	c.Host = Host // holds a default value
+	c.State = StateMap{
+		state: make(map[string]any),
+	}
+	c.step = DefaultStep
+
+	c.stopCh = make(chan struct{})
+	c.Created = time.Now()
+
+	// apply optional parameters
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	url := fmt.Sprintf("http://%s/testcases/%s/select", c.Host, testcase)
 
 	postBody := bytes.NewBuffer([]byte{})
 	resp, err := http.Post(url, "text/raw", postBody)
@@ -261,51 +286,37 @@ func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
+	fmt.Println(string(body))
 	if err != nil {
 		termLog.Error(err.Error())
+		return nil, err
 	}
 
-	// unmarshal
-	var testCase *TestCase
-	err = json.Unmarshal(body, &testCase)
+	err = json.Unmarshal(body, &c)
 	if err != nil {
 		termLog.Error(err.Error())
-		return testCase, err
+		return c, err
 	}
 
-	// initialize fields
-	testCase.State = StateMap{
-		state: make(map[string]any),
-	}
-	testCase.step = DefaultStep
-	// testCase.startCh = make(chan struct{})
-	testCase.stopCh = make(chan struct{})
-	testCase.Created = time.Now()
-
-	fileLog.Info("created test case", "id", testCase.ID, "time", testCase.Created.String())
-
-	// apply optional parameters
-	for _, opt := range opts {
-		opt(testCase)
-	}
+	fileLog.Info("created test case", "id", c.ID, "time", c.Created.String())
 
 	// set the step if its not the default
-	if testCase.step != DefaultStep {
-		err := testCase.SetStep(testCase.step)
+	if c.step != DefaultStep {
+		err := c.SetStep(c.step)
 		if err != nil {
-			fileLog.Error("unable to set step", "test_case", testCase.ID)
-			return testCase, err
+			fileLog.Error("unable to set step", "test_case", c.ID)
+			return c, err
 		}
 	}
 
 	// this never gets used... but is necessary for run to work.
-	d := time.Duration(testCase.step * int(time.Second))
-	testCase.ticker = time.NewTicker(d)
-	testCase.ticker.Stop()
+	d := time.Duration(c.step * int(time.Second))
+	c.ticker = time.NewTicker(d)
+	c.ticker.Stop()
 
-	go testCase.run()
+	go c.run()
 
-	return testCase, nil
+	return c, nil
 }
 
 func stopTestCase(testId string) error {
@@ -541,40 +552,40 @@ func (c *TestCase) Status() bool {
 	return true
 }
 
-// the only way to see if something is runnig is to use status.
-func Running(name string) bool {
-	url := fmt.Sprintf("http://%s/name/%s", Host, name)
-	httpResp, err := Get(url)
-	if err != nil {
-		errMsg := err.Error()
-		if strings.HasSuffix(errMsg, "connect: connection refused") {
-			fileLog.Error("fatal: boptest server not running")
-		}
-		return false
-	}
+// // the only way to see if something is runnig is to use status.
+// func Running(name string) bool {
+// 	url := fmt.Sprintf("http://%s/name/%s", Host, name)
+// 	httpResp, err := Get(url)
+// 	if err != nil {
+// 		errMsg := err.Error()
+// 		if strings.HasSuffix(errMsg, "connect: connection refused") {
+// 			fileLog.Error("fatal: boptest server not running")
+// 		}
+// 		return false
+// 	}
 
-	var boptestErr ErrorList
-	err = json.Unmarshal(httpResp.Body, &boptestErr)
-	if err != nil {
-		// unmarshalling error
-		// this may not be an error, could just the testcase is running
-		fileLog.Info("did not receive error list", "errors", string(httpResp.Body))
-	}
+// 	var boptestErr ErrorList
+// 	err = json.Unmarshal(httpResp.Body, &boptestErr)
+// 	if err != nil {
+// 		// unmarshalling error
+// 		// this may not be an error, could just the testcase is running
+// 		fileLog.Info("did not receive error list", "errors", string(httpResp.Body))
+// 	}
 
-	if len(boptestErr.Errors) > 0 {
-		// check if the first one indicates that the testcase is not running
-		fileLog.Info("boptest returned errors", "errors", string(httpResp.Body))
-		for _, e := range boptestErr.Errors {
-			if (e.Value == name) && (strings.HasPrefix(e.Msg, "Invalid testid:")) {
-				// the testcase is not running.
-				fileLog.Info("testcase not running", "test_case", name)
-				return false
-			}
-		}
-	}
+// 	if len(boptestErr.Errors) > 0 {
+// 		// check if the first one indicates that the testcase is not running
+// 		fileLog.Info("boptest returned errors", "errors", string(httpResp.Body))
+// 		for _, e := range boptestErr.Errors {
+// 			if (e.Value == name) && (strings.HasPrefix(e.Msg, "Invalid testid:")) {
+// 				// the testcase is not running.
+// 				fileLog.Info("testcase not running", "test_case", name)
+// 				return false
+// 			}
+// 		}
+// 	}
 
-	return false
-}
+// 	return false
+// }
 
 func TestIdTimeout(testId string) string {
 	url := fmt.Sprintf("http://%s/inputs/%s", Host, testId)
