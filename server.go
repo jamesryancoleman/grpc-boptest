@@ -20,7 +20,7 @@ func WithAddr(addr string) serverOption {
 }
 
 type Server struct {
-	common.UnimplementedGetSetRunServer
+	common.UnimplementedDeviceControlServer
 
 	Addr     string
 	TestCase *TestCase
@@ -55,7 +55,7 @@ func (s *Server) Start() error {
 
 	// create the grpc server
 	server := grpc.NewServer()
-	common.RegisterGetSetRunServer(server, s)
+	common.RegisterDeviceControlServer(server, s)
 
 	// start the blocking gRPC server in a go routine
 	go func() {

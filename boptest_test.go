@@ -79,6 +79,7 @@ func startTestCase() *TestCase {
 }
 
 func TestMeasurements(t *testing.T) {
+	termLog.Info("getting measurements")
 	testCase := startTestCase()
 	if testCase == nil {
 		t.FailNow()

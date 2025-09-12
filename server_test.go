@@ -59,7 +59,7 @@ func TestGet(t *testing.T) {
 		log.Fatalf("did not connect >> %s", err.Error())
 	}
 	defer conn.Close()
-	c := common.NewGetSetRunClient(conn)
+	c := common.NewDeviceControlClient(conn)
 
 	// issue Get rpc
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
