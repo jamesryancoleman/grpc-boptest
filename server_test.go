@@ -20,7 +20,7 @@ func TestStartServer(t *testing.T) {
 		WithHost("0.0.0.0:1025"), // the boptest docker container
 	)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 	}
 	defer testCase.Stop()
 
@@ -40,12 +40,13 @@ func TestGet(t *testing.T) {
 
 	// create boptest test case
 	testCase, err := NewTestCase(testcase,
-		WithStartTime(3600*24*31),
-		WithStep(2),              // seconds
 		WithHost("0.0.0.0:1025"), // the boptest docker container
+		WithStartTime(3600*24*31),
+		WithStep(60*15), // seconds
+		WithStartNow(),
 	)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 	}
 	defer testCase.Stop()
 
@@ -65,19 +66,32 @@ func TestGet(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	r, err := c.Get(ctx, &common.GetRequest{
-		Header: &common.Header{Src: "test.local", Dst: s.Addr},
-		Keys:   points})
-	if err != nil {
-		fmt.Println(err.Error())
-		t.Fail()
-	}
-	for i, p := range r.GetPairs() {
-		if p.GetError() > 0 {
-			fmt.Printf("pair %d: error %d '%s'\n", i, p.GetError(), p.GetErrorMsg())
-		} else {
-			fmt.Printf("pair %d: %v\n", i, p)
+	func() {
+		after := time.After(time.Second * 5)
+		for {
+			select {
+			case <-after:
+				termLog.Info("test completed")
+				return
+			default:
+				termLog.Info("tick")
+				r, err := c.Get(ctx, &common.GetRequest{
+					Header: &common.Header{Src: "test.local", Dst: s.Addr},
+					Keys:   points})
+				if err != nil {
+					fmt.Println(err.Error())
+					t.Fail()
+				}
+				fmt.Printf("header_time: %s\n", r.Header.GetTime().AsTime().Local())
+				for i, p := range r.GetPairs() {
+					if p.GetError() > 0 {
+						fmt.Printf("\tpair %d: error %d '%s'\n", i, p.GetError(), p.GetErrorMsg())
+					} else {
+						fmt.Printf("\tpair %d: %v\n", i, p)
+					}
+				}
+				time.Sleep(time.Second)
+			}
 		}
-	}
-
+	}()
 }

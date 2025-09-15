@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -22,7 +23,7 @@ var (
 	fileLogLevel = new(slog.LevelVar)
 
 	termLog *slog.Logger
-	fileLog *slog.Logger
+	FileLog *slog.Logger
 )
 
 const (
@@ -31,7 +32,8 @@ const (
 
 	ContentType_ApplicationJSON = "application/json"
 
-	DefaultStep = 3600 // 1 hour, per BOPTEST
+	DefaultStep       = 3600 // 1 hour, per BOPTEST
+	DefaultUpdateFreq = 1    // seecond
 )
 
 // called when the package is imported
@@ -52,7 +54,7 @@ func init() {
 		os.Exit(1)
 	}
 	// assign the terminal logger
-	fileLog = slog.New(slog.NewJSONHandler(file, &slog.HandlerOptions{
+	FileLog = slog.New(slog.NewJSONHandler(file, &slog.HandlerOptions{
 		Level: fileLogLevel, // this can be set programmatically
 	}))
 }
@@ -106,6 +108,26 @@ func (m *StateMap) GetMultiple(keys []string) map[string]any {
 	return results
 }
 
+// returns the current time of the simulation or an error
+func (m *StateMap) Time() (time.Time, error) {
+	m.RLock()
+	defer m.RUnlock()
+
+	val, ok := m.state["time"]
+	if !ok {
+		return time.Now(), fmt.Errorf("time not found in state map")
+	}
+
+	seconds, ok := val.(float64)
+	if !ok {
+		return time.Now(), fmt.Errorf("could not cast time as int")
+	}
+
+	// return time.Time using seconds
+	currentYear := time.Date(time.Now().Year(), 1, 1, 0, 0, int(seconds), 0, time.Local)
+	return currentYear, nil
+}
+
 type TestCase struct {
 	ID   string `json:"testid"`
 	Host string `json:"-"`
@@ -113,11 +135,14 @@ type TestCase struct {
 	stopCh chan struct{} `json:"-"`
 	ticker *time.Ticker  `json:"-"`
 
+	startNow bool `json:"-"`
+
 	Created time.Time `json:"-"`
 	Started time.Time `json:"-"`
 	Stopped time.Time `json:"-"`
 
-	step int `json:"-"` // increment of time to advance the simulation by
+	step       int `json:"-"` // increment of time to advance the simulation by
+	updateFreq int `json:"-"` // how often you want the simulation to recalculate
 
 	StartTime int `json:"start_time"`    // seconds since start of year
 	WarmUp    int `json:"warmup_period"` // seconds before startTime
@@ -153,6 +178,19 @@ func WithWarmUp(d int) testCaseOption {
 func WithStep(d int) testCaseOption {
 	return func(c *TestCase) {
 		c.step = d
+	}
+}
+
+// seconds between steps
+func WithUpdateFrequency(d int) testCaseOption {
+	return func(c *TestCase) {
+		c.updateFreq = d
+	}
+}
+
+func WithStartNow() testCaseOption {
+	return func(c *TestCase) {
+		c.startNow = true
 	}
 }
 
@@ -208,7 +246,7 @@ func Get(url string) (HTTPResponse, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		termLog.Error(err.Error())
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return HTTPResponse{}, err
 	}
 	defer resp.Body.Close()
@@ -267,11 +305,13 @@ func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
 		state: make(map[string]any),
 	}
 	c.step = DefaultStep
+	c.updateFreq = DefaultUpdateFreq
 
 	c.stopCh = make(chan struct{})
 	c.Created = time.Now()
 
 	// apply optional parameters
+	// will override step and updateFreq
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -298,21 +338,23 @@ func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
 		return c, err
 	}
 
-	fileLog.Info("created test case", "id", c.ID, "time", c.Created.String())
+	FileLog.Info("created test case", "id", c.ID, "time", c.Created.String())
 
 	// set the step if its not the default
 	if c.step != DefaultStep {
-		err := c.SetStep(c.step)
+		// because advance moves the simluation forward at the rate of c.step
+		_step := int(math.Round(float64(c.step) / float64(c.updateFreq)))
+		err := c.SetStep(_step)
 		if err != nil {
-			fileLog.Error("unable to set step", "test_case", c.ID)
+			FileLog.Error("unable to set step", "test_case", c.ID)
 			return c, err
 		}
 	}
 
-	// this never gets used... but is necessary for run to work.
-	d := time.Duration(c.step * int(time.Second))
-	c.ticker = time.NewTicker(d)
-	c.ticker.Stop()
+	c.ticker = time.NewTicker(time.Duration(c.updateFreq * int(time.Second)))
+	if !c.startNow {
+		c.ticker.Stop()
+	}
 
 	go c.run()
 
@@ -338,7 +380,7 @@ func (c *TestCase) stop() error {
 		return err
 	}
 	c.Stopped = time.Now()
-	fileLog.Info("stopped test case", "id", c.ID, "time", c.Stopped.String())
+	FileLog.Info("stopped test case", "id", c.ID, "time", c.Stopped.String())
 	return nil
 }
 
@@ -406,36 +448,36 @@ func (c *TestCase) Start() error {
 	// define t=0 and start simulation
 	payload, err := json.Marshal(c)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return err
 	}
 
 	url := fmt.Sprintf("http://%s/initialize/%s", Host, c.ID)
 	b, err := Put(url, "application/json", payload)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return err
 	}
 
 	var resp StateUpdate
 	err = json.Unmarshal(b, &resp)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return err
 	}
 	c.State.SetAll(resp.State)
 
-	fileLog.Info("intialized test case", "id", c.ID, "time", c.Stopped.String())
+	FileLog.Info("intialized test case", "id", c.ID, "time", c.Stopped.String())
 
 	// start a ticker
 	if c.ticker != nil {
-		fileLog.Warn("start called on running simulation")
+		FileLog.Warn("start called on running simulation")
 		return nil
 	}
 
-	d := time.Duration(c.step * int(time.Second))
+	d := time.Duration(c.updateFreq * int(time.Second))
 	c.ticker = time.NewTicker(d)
-	fileLog.Debug("ticker started", "interval", d)
+	FileLog.Debug("ticker started", "interval", d)
 
 	return nil
 }
@@ -449,7 +491,7 @@ func (c *TestCase) run() {
 		case <-c.ticker.C:
 			newState, err := advance(c.ID)
 			if err != nil {
-				fileLog.Error("unable to advance", "test_case", c.ID)
+				FileLog.Error("unable to advance", "test_case", c.ID)
 				return
 			}
 			c.State.SetAll(newState)
@@ -457,7 +499,7 @@ func (c *TestCase) run() {
 		case <-c.stopCh:
 			err := c.stop()
 			if err != nil {
-				fileLog.Error("unable to stop", "test_case", c.ID)
+				FileLog.Error("unable to stop", "test_case", c.ID)
 			}
 			c.stopCh <- struct{}{}
 			return
@@ -466,15 +508,13 @@ func (c *TestCase) run() {
 }
 
 func advance(testCaseID string) (map[string]any, error) {
-	termLog.Debug("tick")
-
 	url := fmt.Sprintf("http://%s/advance/%s", Host, testCaseID)
 	raw := Post(url, "application/json", []byte("{}"))
 
 	var resp StateUpdate
 	err := json.Unmarshal(raw, &resp)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return nil, err
 	}
 
@@ -486,14 +526,14 @@ func step(testID string) (int, error) {
 
 	resp, err := Get(url)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return 0, err
 	}
 
 	var stepResp SetStepResponse
 	err = json.Unmarshal(resp.Body, &stepResp)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return 0, err
 	}
 
@@ -509,14 +549,14 @@ func setStep(testID string, step int) error {
 	url := fmt.Sprintf("http://%s/step/%s", Host, testID)
 	raw, err := Put(url, "application/json", []byte(fmt.Sprintf("{\"step\": %d}", step)))
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return err
 	}
 
 	var resp JSONResponse
 	err = json.Unmarshal(raw, &resp)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return err
 	}
 
@@ -539,7 +579,7 @@ func (c *TestCase) Status() bool {
 	if err != nil {
 		errMsg := err.Error()
 		if strings.HasSuffix(errMsg, "connect: connection refused") {
-			fileLog.Error("fatal: boptest server not running")
+			FileLog.Error("fatal: boptest server not running")
 		}
 		return false
 	}
@@ -559,7 +599,7 @@ func (c *TestCase) Status() bool {
 // 	if err != nil {
 // 		errMsg := err.Error()
 // 		if strings.HasSuffix(errMsg, "connect: connection refused") {
-// 			fileLog.Error("fatal: boptest server not running")
+// 			FileLog.Error("fatal: boptest server not running")
 // 		}
 // 		return false
 // 	}
@@ -569,16 +609,16 @@ func (c *TestCase) Status() bool {
 // 	if err != nil {
 // 		// unmarshalling error
 // 		// this may not be an error, could just the testcase is running
-// 		fileLog.Info("did not receive error list", "errors", string(httpResp.Body))
+// 		FileLog.Info("did not receive error list", "errors", string(httpResp.Body))
 // 	}
 
 // 	if len(boptestErr.Errors) > 0 {
 // 		// check if the first one indicates that the testcase is not running
-// 		fileLog.Info("boptest returned errors", "errors", string(httpResp.Body))
+// 		FileLog.Info("boptest returned errors", "errors", string(httpResp.Body))
 // 		for _, e := range boptestErr.Errors {
 // 			if (e.Value == name) && (strings.HasPrefix(e.Msg, "Invalid testid:")) {
 // 				// the testcase is not running.
-// 				fileLog.Info("testcase not running", "test_case", name)
+// 				FileLog.Info("testcase not running", "test_case", name)
 // 				return false
 // 			}
 // 		}

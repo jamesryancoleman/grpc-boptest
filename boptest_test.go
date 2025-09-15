@@ -30,7 +30,7 @@ func TestLoggingLevels(t *testing.T) {
 	fileLogLevel.Set(slog.LevelWarn)
 	fmt.Printf("The file log level is %s\n", fileLogLevel.Level().String())
 	termLog.Info("this should print to the terminal")
-	fileLog.Info("this should print log file")
+	FileLog.Info("this should print log file")
 }
 
 func TestStopTest(t *testing.T) {
@@ -70,7 +70,7 @@ func startTestCase() *TestCase {
 	Host = host
 	testCase, err := NewTestCase(testcase)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return nil
 	}
 	// fmt.Printf("started test case \"%s\" with id \"%s\" @ %v.\n",
@@ -88,7 +88,7 @@ func TestMeasurements(t *testing.T) {
 
 	m, err := testCase.Measurements()
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		t.FailNow()
 	}
 	for k, p := range m {
@@ -119,12 +119,12 @@ func TestStopWithChannel(t *testing.T) {
 		WithStep(2), // seconds
 	)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 	}
 
 	err = testCase.Start()
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 	}
 
 	fmt.Println("sleeping until stop channel send")
@@ -256,13 +256,13 @@ func TestCaseStatus(t *testing.T) {
 		WithStep(2), // seconds
 	)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 	}
 	testCase.Stop()
 
 	err = testCase.Start()
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		t.FailNow()
 	}
 
@@ -280,13 +280,13 @@ func TestCaseStatus(t *testing.T) {
 		WithStep(2), // seconds
 	)
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 	}
 	defer testCase.Stop()
 
 	err = testCase.Start()
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		t.FailNow()
 	}
 
@@ -297,4 +297,43 @@ func TestCaseStatus(t *testing.T) {
 		fmt.Println("not running")
 		t.Fail()
 	}
+}
+
+func TestTime(t *testing.T) {
+	var startSeconds int = 3600 * 24 * 31
+	Host = host
+	testCase, err := NewTestCase(testcase,
+		WithStartTime(startSeconds),
+		WithStep(60),
+		WithUpdateFrequency(1),
+		WithStartNow(),
+	)
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+	defer testCase.Stop()
+
+	err = testCase.Start()
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+
+	_time, err := testCase.State.Time()
+	if err != nil {
+		termLog.Error(err.Error())
+		t.Fail()
+	}
+	fmt.Printf("%v\n", _time)
+
+	time.Sleep(time.Second * 4)
+
+	_time, err = testCase.State.Time()
+	if err != nil {
+		termLog.Error(err.Error())
+		t.Fail()
+	}
+	fmt.Printf("%v\n", _time)
+
 }

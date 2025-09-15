@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"github.com/jamesryancoleman/bos/common"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type serverOption func(*Server)
@@ -42,7 +44,7 @@ func (s *Server) Start() error {
 	// start the simulation up the simulation
 	err := s.TestCase.Start()
 	if err != nil {
-		fileLog.Error(err.Error())
+		FileLog.Error(err.Error())
 		return err
 	}
 
@@ -75,6 +77,11 @@ func (s *Server) Get(ctx context.Context, req *common.GetRequest) (*common.GetRe
 	header := req.GetHeader()
 	header.Dst = header.GetSrc()
 	header.Src = header.GetDst()
+	t, err := s.TestCase.State.Time()
+	if err != nil {
+		t = time.Now()
+	}
+	header.Time = timestamppb.New(t)
 
 	keys := req.GetKeys()
 	pairs := make([]*common.GetPair, len(keys))
