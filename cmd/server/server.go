@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jamesryancoleman/bos/drivers/boptest"
+	boptest "github.com/jamesryancoleman/grpc-boptest"
 )
 
 const defaultAddr string = "0.0.0.0:50066"
@@ -22,18 +22,21 @@ func main() {
 	// create boptest test case
 	testCase, err := boptest.NewTestCase(
 		*caseNamePtr,
-		boptest.WithHost("0.0.0.0:1025"), // the boptest docker container
+		boptest.WithHost("nuc.local:1025"), // the boptest docker container
 		boptest.WithStartTime(*startTimePtr),
 		boptest.WithStep(*stepPtr),
+		boptest.WithUpdateFrequency(15),
 		boptest.WithStartNow(),
 	)
 	if err != nil {
 		boptest.FileLog.Error(err.Error())
+		boptest.TermLog.Error(err.Error())
 	}
 	defer testCase.Stop()
 
 	s := boptest.NewServer(defaultAddr, testCase)
 	s.Start()
+	fmt.Printf("boptest server started @ %s\n", defaultAddr)
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)

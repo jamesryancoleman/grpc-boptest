@@ -29,14 +29,14 @@ func TestLoggingLevels(t *testing.T) {
 	fmt.Printf("The term log level is %s\n", termLogLevel.Level().String())
 	fileLogLevel.Set(slog.LevelWarn)
 	fmt.Printf("The file log level is %s\n", fileLogLevel.Level().String())
-	termLog.Info("this should print to the terminal")
+	TermLog.Info("this should print to the terminal")
 	FileLog.Info("this should print log file")
 }
 
 func TestStopTest(t *testing.T) {
 	Host = host
 	fmt.Printf("stopping test case \"%s\"\n", testID)
-	err := stopTestCase(testID)
+	err := StopTestCase(testID)
 	if err != nil {
 		fmt.Println(err.Error())
 		t.FailNow()
@@ -79,7 +79,7 @@ func startTestCase() *TestCase {
 }
 
 func TestMeasurements(t *testing.T) {
-	termLog.Info("getting measurements")
+	TermLog.Info("getting measurements")
 	testCase := startTestCase()
 	if testCase == nil {
 		t.FailNow()
@@ -322,7 +322,7 @@ func TestTime(t *testing.T) {
 
 	_time, err := testCase.State.Time()
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 		t.Fail()
 	}
 	fmt.Printf("%v\n", _time)
@@ -331,7 +331,7 @@ func TestTime(t *testing.T) {
 
 	_time, err = testCase.State.Time()
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 		t.Fail()
 	}
 	fmt.Printf("%v\n", _time)

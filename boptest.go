@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -22,8 +23,10 @@ var (
 	termLogLevel = new(slog.LevelVar)
 	fileLogLevel = new(slog.LevelVar)
 
-	termLog *slog.Logger
+	TermLog *slog.Logger
 	FileLog *slog.Logger
+
+	schemaRe = regexp.MustCompile(`^boptest://(?P<testCase>[a-zA-Z0-9\_\-.]*)/(?P<point>[a-zA-Z0-9\_\-.]+)$`)
 )
 
 const (
@@ -43,14 +46,14 @@ func init() {
 	fileLogLevel.Set(slog.LevelDebug)
 
 	// standard terminal logger
-	termLog = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	TermLog = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: termLogLevel, // this can be set programmatically
 	}))
 
 	// create a file, if it doesn't exist, and write json log there
 	file, err := os.OpenFile("boptest_log.json", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		termLog.Error("Failed to open log file", "error", err)
+		TermLog.Error("Failed to open log file", "error", err)
 		os.Exit(1)
 	}
 	// assign the terminal logger
@@ -245,7 +248,7 @@ type BoptestError struct {
 func Get(url string) (HTTPResponse, error) {
 	resp, err := http.Get(url)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 		FileLog.Error(err.Error())
 		return HTTPResponse{}, err
 	}
@@ -253,7 +256,7 @@ func Get(url string) (HTTPResponse, error) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 	}
 	return HTTPResponse{
 		Status: resp.Status,
@@ -276,7 +279,7 @@ func Put(url, contentType string, payload []byte) ([]byte, error) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 	}
 	return body, nil
 }
@@ -285,13 +288,13 @@ func Post(url, contentType string, payload []byte) []byte {
 	postBody := bytes.NewBuffer(payload)
 	resp, err := http.Post(url, contentType, postBody)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 	}
 	return body
 }
@@ -321,20 +324,21 @@ func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
 	postBody := bytes.NewBuffer([]byte{})
 	resp, err := http.Post(url, "text/raw", postBody)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	fmt.Println(string(body))
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 		return nil, err
 	}
 
 	err = json.Unmarshal(body, &c)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 		return c, err
 	}
 
@@ -343,7 +347,7 @@ func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
 	// set the step if its not the default
 	if c.step != DefaultStep {
 		// because advance moves the simluation forward at the rate of c.step
-		_step := int(math.Round(float64(c.step) / float64(c.updateFreq)))
+		_step := int(math.Round(float64(c.step) * float64(c.updateFreq)))
 		err := c.SetStep(_step)
 		if err != nil {
 			FileLog.Error("unable to set step", "test_case", c.ID)
@@ -361,7 +365,7 @@ func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
 	return c, nil
 }
 
-func stopTestCase(testId string) error {
+func StopTestCase(testId string) error {
 	url := fmt.Sprintf("http://%s/stop/%s", Host, testId)
 	_, err := Put(url, "", []byte{})
 	if err != nil {
@@ -375,7 +379,7 @@ func (c *TestCase) stop() error {
 	if c.ticker != nil {
 		c.ticker.Stop()
 	}
-	err := stopTestCase(c.ID)
+	err := StopTestCase(c.ID)
 	if err != nil {
 		return err
 	}
@@ -396,7 +400,7 @@ func measurements(testid string) (map[string]PointProperties, error) {
 
 	resp, err := http.Get(url)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 	}
 	defer resp.Body.Close()
 
@@ -485,7 +489,7 @@ func (c *TestCase) Start() error {
 // run should be called on a gorountine and will wait for 1 time step to call
 // then start working in a loop.
 func (c *TestCase) run() {
-	termLog.Debug("waiting for second time step", "step_duration", c.step)
+	TermLog.Debug("waiting for second time step", "step_duration", c.step)
 	for {
 		select {
 		case <-c.ticker.C:
@@ -632,13 +636,13 @@ func TestIdTimeout(testId string) string {
 
 	resp, err := http.Get(url)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		termLog.Error(err.Error())
+		TermLog.Error(err.Error())
 	}
 
 	fmt.Printf("'%s'\n", resp.Status)

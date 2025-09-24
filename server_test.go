@@ -30,12 +30,27 @@ func TestStartServer(t *testing.T) {
 	time.Sleep(time.Second)
 }
 
+func TestParseUri(t *testing.T) {
+	var uri = []string{
+		"boptest:///zon_reaTRooAir_y",
+		"boptest://bestest_air/con_oveTSetCoo_u",
+		"boptest://bestest_air/fcu_oveFan_activate",
+		"https://google.com",
+	}
+
+	fmt.Printf("%#v\n", schemaRe.SubexpNames())
+	for _, u := range uri {
+		matches := schemaRe.FindStringSubmatch(u)
+		fmt.Printf("%#v\n", matches)
+	}
+}
+
 func TestGet(t *testing.T) {
 	// points to get
 	var points = []string{
-		"zon_reaTRooAir_y",
-		"con_oveTSetCoo_u",
-		"fcu_oveFan_activate",
+		"boptest:///zon_reaTRooAir_y",
+		"boptest://bestest_air/con_oveTSetCoo_u",
+		"boptest://bestest_air/fcu_oveFan_activate",
 	}
 
 	// create boptest test case
@@ -71,10 +86,10 @@ func TestGet(t *testing.T) {
 		for {
 			select {
 			case <-after:
-				termLog.Info("test completed")
+				TermLog.Info("test completed")
 				return
 			default:
-				termLog.Info("tick")
+				TermLog.Info("tick")
 				r, err := c.Get(ctx, &common.GetRequest{
 					Header: &common.Header{Src: "test.local", Dst: s.Addr},
 					Keys:   points})

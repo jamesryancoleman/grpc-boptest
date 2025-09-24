@@ -77,24 +77,40 @@ func (s *Server) Get(ctx context.Context, req *common.GetRequest) (*common.GetRe
 	header := req.GetHeader()
 	header.Dst = header.GetSrc()
 	header.Src = header.GetDst()
+
+	// extract keys from uri strings
+	keys := req.GetKeys()
+	TermLog.Info(fmt.Sprintf("received keys: %v", keys))
+	var points []string
+	pointToUri := make(map[string]string, len(keys))
+	for _, k := range keys {
+		p := schemaRe.FindStringSubmatch(k)[2]
+		points = append(points, p)
+		pointToUri[p] = k
+	}
+
+	// get the state from the simulation
+	m := s.TestCase.State.GetMultiple(points)
+
+	// package the results
+	pairs := make([]*common.GetPair, len(points))
+	var i int
+	for p, v := range m {
+		if u, ok := pointToUri[p]; ok {
+			pairs[i] = &common.GetPair{
+				Key:   u,
+				Value: fmt.Sprintf("%v", v),
+			}
+		}
+		i++
+	}
+
+	// set the header time based on the state machine
 	t, err := s.TestCase.State.Time()
 	if err != nil {
 		t = time.Now()
 	}
 	header.Time = timestamppb.New(t)
-
-	keys := req.GetKeys()
-	pairs := make([]*common.GetPair, len(keys))
-
-	m := s.TestCase.State.GetMultiple(keys)
-	var i int
-	for k, v := range m {
-		pairs[i] = &common.GetPair{
-			Key:   k,
-			Value: fmt.Sprintf("%v", v),
-		}
-		i++
-	}
 
 	// fetch values from simulation
 	return &common.GetResponse{
