@@ -60,6 +60,8 @@ func init() {
 	FileLog = slog.New(slog.NewJSONHandler(file, &slog.HandlerOptions{
 		Level: fileLogLevel, // this can be set programmatically
 	}))
+
+	TermLog.Info("TZ confirmation", "TZ", time.Local)
 }
 
 // a concurrency safe map for storing simulation state
@@ -123,7 +125,7 @@ func (m *StateMap) Time() (time.Time, error) {
 
 	seconds, ok := val.(float64)
 	if !ok {
-		return time.Now(), fmt.Errorf("could not cast time as int")
+		return time.Now(), fmt.Errorf("could not cast time as float")
 	}
 
 	// return time.Time using seconds

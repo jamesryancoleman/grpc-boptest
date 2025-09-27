@@ -78,6 +78,15 @@ func (s *Server) Get(ctx context.Context, req *common.GetRequest) (*common.GetRe
 	header.Dst = header.GetSrc()
 	header.Src = header.GetDst()
 
+	// set the header time based on the state machine
+	t, err := s.TestCase.State.Time()
+	fmt.Printf("simulation time %s\n", t.Format(time.RFC3339))
+	if err != nil {
+		TermLog.Warn("no time in State map")
+		t = time.Now()
+	}
+	header.Time = timestamppb.New(t)
+
 	// extract keys from uri strings
 	keys := req.GetKeys()
 	TermLog.Info(fmt.Sprintf("received keys: %v", keys))
@@ -100,17 +109,13 @@ func (s *Server) Get(ctx context.Context, req *common.GetRequest) (*common.GetRe
 			pairs[i] = &common.GetPair{
 				Key:   u,
 				Value: fmt.Sprintf("%v", v),
+				Time:  timestamppb.New(t),
 			}
 		}
 		i++
 	}
 
-	// set the header time based on the state machine
-	t, err := s.TestCase.State.Time()
-	if err != nil {
-		t = time.Now()
-	}
-	header.Time = timestamppb.New(t)
+	fmt.Printf("header time %s\n", header.Time.AsTime().Format(time.RFC3339))
 
 	// fetch values from simulation
 	return &common.GetResponse{

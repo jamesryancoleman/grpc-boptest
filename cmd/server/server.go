@@ -14,7 +14,8 @@ const defaultAddr string = "0.0.0.0:50066"
 
 func main() {
 	caseNamePtr := flag.String("case", "bestest_air", "name of the testcase")
-	startTimePtr := flag.Int("start", 2678400, "seconds since start of year")
+	// Default is July 1st
+	startTimePtr := flag.Int("start", 181*24*60*60, "seconds since start of year")
 	stepPtr := flag.Int("step", 60, "seconds to advance the simluation per update")
 
 	flag.Parse()
