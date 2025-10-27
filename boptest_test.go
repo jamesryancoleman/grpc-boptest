@@ -175,9 +175,11 @@ func TestGetMultiple(t *testing.T) {
 	termLogLevel.Set(slog.LevelDebug)
 	Host = host
 
-	testCase, err := NewTestCase(testcase,
+	testCase, err := NewTestCase(
+		testcase,
 		WithStartTime(3600*24*31),
 		WithStep(2),
+		WithStartNow(),
 	)
 	if err != nil {
 		fmt.Println(err.Error())
@@ -209,6 +211,76 @@ func TestGetMultiple(t *testing.T) {
 
 	testCase.Stop()
 	time.Sleep(time.Second * 1) // wait for cleanup
+}
+
+func TestSet(t *testing.T) {
+	fileLogLevel.Set(slog.LevelDebug)
+	termLogLevel.Set(slog.LevelDebug)
+	Host = host
+
+	testCase, err := NewTestCase(testcase,
+		WithStartTime(0), // should be Jan 1 at midnight
+		WithStep(15*60),
+		WithUpdateFrequency(1),
+		WithStartNow(),
+	)
+	if err != nil {
+		// unable to start testcase
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+
+	err = testCase.Start()
+	if err != nil {
+		fmt.Println(err.Error())
+		t.FailNow()
+	}
+
+	timeKey := "time"
+
+	overrideKey := "con_oveTSetHea_activate" // heating setpoint override
+	zoneStPt := "con_oveTSetHea_u"
+	setPtKey := "fcu_oveTSup_u" // Supply air temperature setpoint
+	fanFlowStPtKey := "fcu_oveFan_u"
+	fanCmdKey := "fcu_oveFan_activate"
+
+	fanFlowActKey := "fcu_reaFloSup_y"
+	sensorKey := "zon_reaTRooAir_y" // zone temp
+
+	// check the current state of the simulation
+	curValues := testCase.State.GetMultiple([]string{timeKey, overrideKey, setPtKey, sensorKey, fanFlowActKey})
+	fmt.Printf("start:\t%+v\n", curValues)
+	// time.Sleep(2 * time.Second)
+	func() {
+		timeout := time.After(15 * time.Second)
+		ticker := time.NewTicker(2 * time.Second)
+		action1 := time.After(2500 * time.Millisecond)
+		for {
+			select {
+			case <-timeout:
+				ticker.Stop()
+				return
+			case <-action1:
+				cmd := 1
+				fmt.Printf("input:\t%s=%v\n", overrideKey, cmd)
+				testCase.SetInput(overrideKey, cmd)
+				testCase.SetInput(zoneStPt, 295)
+				testCase.SetInput(setPtKey, 303)
+				testCase.SetInput(fanCmdKey, 1)
+				testCase.SetInput(fanFlowStPtKey, 0.75)
+			case <-ticker.C:
+				curValues = testCase.State.GetMultiple([]string{timeKey, overrideKey, setPtKey, sensorKey, fanFlowActKey})
+				fmt.Printf("update:\t%+v\n", curValues)
+				// time.Sleep(time.Second)
+			}
+		}
+	}()
+	curValues = testCase.State.GetMultiple([]string{timeKey, overrideKey, setPtKey})
+	fmt.Printf("end:\t%+v\n", curValues)
+
+	testCase.Stop()
+	fmt.Printf("done:\t%+v\n", curValues)
+	time.Sleep(time.Millisecond * 500) // wait for cleanup
 }
 
 func TestSetGetStep(t *testing.T) {

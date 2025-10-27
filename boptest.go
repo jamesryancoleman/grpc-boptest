@@ -64,28 +64,71 @@ func init() {
 	TermLog.Info("TZ confirmation", "TZ", time.Local)
 }
 
-// a concurrency safe map for storing simulation state
-type StateMap struct {
-	state map[string]any
-
+// a concurrency safe map
+type SafeMap struct {
+	data map[string]any
 	sync.RWMutex
 }
+
+func (m *SafeMap) Set(key string, value any) {
+	m.Lock()
+	defer m.Unlock()
+	if m.data == nil {
+		m.data = map[string]any{key: value}
+	} else {
+		m.data[key] = value
+	}
+	// TermLog.Debug("set complete", "data", m.data)
+}
+
+func (m *SafeMap) SetAll(values map[string]any) {
+	m.Lock()
+	defer m.Unlock()
+
+	m.data = make(map[string]any, len(values))
+	maps.Copy(m.data, values)
+}
+
+func (m *SafeMap) Clear() {
+	m.Lock()
+	defer m.Unlock()
+	clear(m.data)
+}
+
+func (m *SafeMap) GetAll() map[string]any {
+	m.RLock()
+	defer m.RUnlock()
+	return maps.Clone(m.data)
+}
+
+func (m *SafeMap) Flush() map[string]any {
+	m.Lock()
+	defer m.Unlock()
+	defer clear(m.data)
+	if m.data == nil {
+		return map[string]any{}
+	}
+	return maps.Clone(m.data)
+}
+
+// a concurrency safe map for storing simulation state
+type StateMap SafeMap
 
 // overwrites the whole map
 func (m *StateMap) SetAll(newState map[string]any) {
 	m.Lock()
 	defer m.Unlock()
 
-	m.state = make(map[string]any, len(newState))
-	maps.Copy(m.state, newState)
+	m.data = make(map[string]any, len(newState))
+	maps.Copy(m.data, newState)
 }
 
 func (m *StateMap) GetAll() map[string]any {
 	m.RLock()
 	defer m.RUnlock()
 
-	copy := make(map[string]any, len(m.state))
-	maps.Copy(copy, m.state)
+	copy := make(map[string]any, len(m.data))
+	maps.Copy(copy, m.data)
 
 	return copy
 }
@@ -94,7 +137,7 @@ func (m *StateMap) GetAll() map[string]any {
 func (m *StateMap) Get(key string) any {
 	m.RLock()
 	defer m.RUnlock()
-	if val, ok := m.state[key]; ok {
+	if val, ok := m.data[key]; ok {
 		return val
 	}
 	return nil
@@ -106,7 +149,7 @@ func (m *StateMap) GetMultiple(keys []string) map[string]any {
 
 	results := make(map[string]any)
 	for _, key := range keys {
-		if val, ok := m.state[key]; ok {
+		if val, ok := m.data[key]; ok {
 			results[key] = val
 		}
 	}
@@ -118,7 +161,7 @@ func (m *StateMap) Time() (time.Time, error) {
 	m.RLock()
 	defer m.RUnlock()
 
-	val, ok := m.state["time"]
+	val, ok := m.data["time"]
 	if !ok {
 		return time.Now(), fmt.Errorf("time not found in state map")
 	}
@@ -153,6 +196,8 @@ type TestCase struct {
 	WarmUp    int `json:"warmup_period"` // seconds before startTime
 
 	State StateMap `json:"-"`
+
+	writeBuffer SafeMap `json:"-"`
 }
 
 type testCaseOption func(*TestCase)
@@ -307,7 +352,7 @@ func NewTestCase(testcase string, opts ...testCaseOption) (*TestCase, error) {
 	// initialize fields
 	c.Host = Host // holds a default value
 	c.State = StateMap{
-		state: make(map[string]any),
+		data: make(map[string]any),
 	}
 	c.step = DefaultStep
 	c.updateFreq = DefaultUpdateFreq
@@ -391,7 +436,9 @@ func (c *TestCase) stop() error {
 }
 
 func (c *TestCase) Stop() {
+	// TermLog.Info("s†op called")
 	c.stopCh <- struct{}{}
+	// TermLog.Info("first send on stop chan")
 	<-c.stopCh // unblocked by the run loop
 }
 
@@ -495,13 +542,15 @@ func (c *TestCase) run() {
 	for {
 		select {
 		case <-c.ticker.C:
-			newState, err := advance(c.ID)
+			inputs := c.writeBuffer.Flush() // may be empty
+			// TermLog.Debug("flushed write buffer", "data", inputs)
+			newState, err := advance(c.ID, inputs)
 			if err != nil {
 				FileLog.Error("unable to advance", "test_case", c.ID)
 				return
 			}
 			c.State.SetAll(newState)
-
+			// TermLog.Debug("state update", "new_state", newState)
 		case <-c.stopCh:
 			err := c.stop()
 			if err != nil {
@@ -513,19 +562,48 @@ func (c *TestCase) run() {
 	}
 }
 
-func advance(testCaseID string) (map[string]any, error) {
-	url := fmt.Sprintf("http://%s/advance/%s", Host, testCaseID)
-	raw := Post(url, "application/json", []byte("{}"))
+func (c *TestCase) SetInput(key string, value any) {
+	TermLog.Info("setting input", key, value)
+	c.writeBuffer.Set(key, value)
+}
 
+// advance takes a testCaseID and a map of inputs to use at the next timestep.
+// The map may be empty.
+func advance(testCaseID string, inputs map[string]any) (map[string]any, error) {
+	url := fmt.Sprintf("http://%s/advance/%s", Host, testCaseID)
+	payload, err := json.Marshal(inputs)
+	if err != nil {
+		return map[string]any{}, err
+	}
+	TermLog.Debug("making advance request", "payload", string(payload))
+	raw := Post(url, "application/json", payload)
 	var resp StateUpdate
-	err := json.Unmarshal(raw, &resp)
+	err = json.Unmarshal(raw, &resp)
 	if err != nil {
 		FileLog.Error(err.Error())
+		TermLog.Error(err.Error(), "payload", string(raw))
 		return nil, err
 	}
-
 	return resp.State, nil
 }
+
+// func setInputs(testCaseID string, m map[string]string) error {
+// 	url := fmt.Sprintf("http://%s/step/%s", Host, testID)
+// 	raw, err := Put(url, "application/json", fmt.Appendf([]byte{}, "{\"step\": %d}", step))
+// 	if err != nil {
+// 		FileLog.Error(err.Error())
+// 		return err
+// 	}
+
+// 	var resp JSONResponse
+// 	err = json.Unmarshal(raw, &resp)
+// 	if err != nil {
+// 		FileLog.Error(err.Error())
+// 		return err
+// 	}
+
+// 	return nil
+// }
 
 func step(testID string) (int, error) {
 	url := fmt.Sprintf("http://%s/step/%s", Host, testID)
@@ -553,7 +631,7 @@ func (c *TestCase) Step() (int, error) {
 // this should
 func setStep(testID string, step int) error {
 	url := fmt.Sprintf("http://%s/step/%s", Host, testID)
-	raw, err := Put(url, "application/json", []byte(fmt.Sprintf("{\"step\": %d}", step)))
+	raw, err := Put(url, "application/json", fmt.Appendf([]byte{}, "{\"step\": %d}", step))
 	if err != nil {
 		FileLog.Error(err.Error())
 		return err

@@ -124,6 +124,38 @@ func (s *Server) Get(ctx context.Context, req *common.GetRequest) (*common.GetRe
 	}, nil
 }
 
+func (s *Server) Set(ctx context.Context, req *common.SetRequest) (*common.SetResponse, error) {
+	header := req.GetHeader()
+	header.Dst = header.GetSrc()
+	header.Src = header.GetDst()
+
+	// TODO: confirm if setting a time is necessary
+
+	// extract keys, convert to internal name, and reassociate with values
+	pairs := req.GetPairs()
+	TermLog.Info("set request received", "num_pairs", len(pairs))
+
+	// create a look up table to convert external to internal keys
+	externalToInternal := make(map[string]string, len(pairs))
+
+	payload := make(map[string]string, len(pairs))
+	for i := range pairs {
+		external := pairs[i].GetKey()
+		internal := schemaRe.FindStringSubmatch(external)[2]
+		payload[internal] = pairs[i].GetValue()
+		externalToInternal[external] = internal
+
+		// write to the simulation
+		s.TestCase.SetInput(internal, pairs[i].GetValue())
+	}
+
+	// return
+	return &common.SetResponse{
+		Header: header,
+		Pairs:  pairs,
+	}, nil
+}
+
 // Any call must confirm the testcase is actually running and if not, start it.
 // TODO: determine what time to start it at.
 

@@ -45,7 +45,7 @@ func TestParseUri(t *testing.T) {
 	}
 }
 
-func TestGet(t *testing.T) {
+func TestGetRpc(t *testing.T) {
 	// points to get
 	var points = []string{
 		"boptest:///zon_reaTRooAir_y",
@@ -106,6 +106,114 @@ func TestGet(t *testing.T) {
 					}
 				}
 				time.Sleep(time.Second)
+			}
+		}
+	}()
+}
+
+func TestSetRpc(t *testing.T) {
+	// points to set
+	var setPts = []string{
+		"boptest://bestest_air/con_oveTSetHea_activate",
+		"boptest://bestest_air/con_oveTSetHea_u",
+		"boptest://bestest_air/fcu_oveTSup_u",
+		"boptest://bestest_air/fcu_oveFan_u",
+		"boptest://bestest_air/fcu_oveFan_activate",
+	}
+
+	var values = []string{
+		"1",
+		"295",
+		"303",
+		"0.75",
+		"1",
+	}
+
+	setPairs := make([]*common.SetPair, len(setPts))
+	for i := range setPts {
+		setPairs[i] = &common.SetPair{Key: setPts[i], Value: values[i]}
+	}
+
+	// points to get
+	var readPts = []string{
+		"boptest://bestest_air/fcu_reaFloSup_y",
+		"boptest://bestest_air/zon_reaTRooAir_y",
+		"boptest://bestest_air/con_oveTSetHea_activate",
+		"boptest://bestest_air/con_oveTSetHea_u",
+	}
+
+	// create boptest test case
+	testCase, err := NewTestCase(testcase,
+		WithHost("0.0.0.0:1025"), // the boptest docker container
+		WithStartTime(0),
+		WithStep(60*15), // seconds
+		WithStartNow(),
+	)
+	if err != nil {
+		FileLog.Error(err.Error())
+	}
+	defer testCase.Stop()
+
+	s := NewServer("0.0.0.0:50070", testCase)
+	s.Start()
+
+	// query the server and ask for the points
+	// set up connection to server
+	conn, err := grpc.NewClient(s.Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("did not connect >> %s", err.Error())
+	}
+	defer conn.Close()
+	c := common.NewDeviceControlClient(conn)
+
+	// issue Get rpc
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	<-time.After(time.Millisecond * 1500) // time for set up
+	func() {
+		ticker := time.NewTicker(2 * time.Second)
+		action1 := time.After(3 * time.Second)
+		timeout := time.After(15 * time.Second)
+		for {
+			select {
+			case <-timeout:
+				TermLog.Info("test completed")
+				return
+			case <-action1:
+				r, err := c.Set(ctx, &common.SetRequest{
+					Header: &common.Header{Src: "test.local", Dst: s.Addr},
+					Pairs:  setPairs,
+				})
+				if err != nil {
+					fmt.Println(err.Error())
+					t.Fail()
+				}
+				fmt.Printf("header_time: %s\n", r.Header.GetTime().AsTime().Local())
+				for i, p := range r.GetPairs() {
+					if p.GetError() > 0 {
+						fmt.Printf("\tpair %d: error %d '%s'\n", i, p.GetError(), p.GetErrorMsg())
+					} else {
+						fmt.Printf("\tpair %d: %v\n", i, p)
+					}
+				}
+			case <-ticker.C:
+				TermLog.Info("tick")
+				r, err := c.Get(ctx, &common.GetRequest{
+					Header: &common.Header{Src: "test.local", Dst: s.Addr},
+					Keys:   readPts})
+				if err != nil {
+					fmt.Println(err.Error())
+					t.Fail()
+				}
+				fmt.Printf("header_time: %s\n", r.Header.GetTime().AsTime().Local())
+				for i, p := range r.GetPairs() {
+					if p.GetError() > 0 {
+						fmt.Printf("\tpair %d: error %d '%s'\n", i, p.GetError(), p.GetErrorMsg())
+					} else {
+						fmt.Printf("\tpair %d: %v\n", i, p)
+					}
+				}
 			}
 		}
 	}()
