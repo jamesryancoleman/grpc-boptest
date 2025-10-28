@@ -17,6 +17,7 @@ func main() {
 	// Default is July 1st
 	startTimePtr := flag.Int("start", 181*24*60*60, "seconds since start of year")
 	stepPtr := flag.Int("step", 60, "seconds to advance the simluation per update")
+	freqPtr := flag.Int("freq", 15, "update simlulation every SECONDS")
 
 	flag.Parse()
 
@@ -26,7 +27,7 @@ func main() {
 		boptest.WithHost("nuc.local:1025"), // the boptest docker container
 		boptest.WithStartTime(*startTimePtr),
 		boptest.WithStep(*stepPtr),
-		boptest.WithUpdateFrequency(15),
+		boptest.WithUpdateFrequency(*freqPtr),
 		boptest.WithStartNow(),
 	)
 	if err != nil {

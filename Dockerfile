@@ -13,6 +13,6 @@ COPY ../drivers/boptest /opt/bos/services/drivers/boptest/
 WORKDIR /opt/bos/services/drivers/boptest/
 
 WORKDIR /opt/bos/services/drivers/boptest/cmd/server/
-CMD [ "go","run","server.go" ]
+CMD [ "go","run","server.go","-start=0"]
 
 
